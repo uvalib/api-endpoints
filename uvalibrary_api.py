@@ -15,12 +15,33 @@ api_version = 'v0.1'
 catalogURL = "http://search.lib.virginia.edu/catalog.json"
 an_api = endpoints.api(name="uvalibrary", version=api_version)
 
+class Image(messages.Message):
+  """Image from the digital repo"""
+  id = messages.StringField(1, required=True)
+
 class Item(messages.Message):
   """Item from the catalog."""
   id = messages.StringField(1, required=True)
   title = messages.StringField(2, repeated=True)
-  format = messages.StringField(3, repeated=True)
-  library = messages.StringField(4, repeated=True)
+  subtitle = messages.StringField(3, repeated=True)
+  format = messages.StringField(4, repeated=True)
+  library = messages.StringField(5, repeated=True)
+  barcode = messages.StringField(6, repeated=True)
+  oclc = messages.StringField(7, repeated=True)
+  author = messages.StringField(8, repeated=True)
+  isbn = messages.StringField(9, repeated=True)
+  published_date = messages.StringField(10, repeated=True)
+  supplemental_url = messages.StringField(11, repeated=True)
+  call_number = messages.StringField(12, repeated=True)
+  publisher = messages.StringField(13, repeated=True)
+  location = messages.StringField(14, repeated=True)
+  source = messages.StringField(15, repeated=True)
+  date_indexed = messages.StringField(16, repeated=True)
+  url = messages.StringField(17, repeated=True)
+  series_title = messages.StringField(18, repeated=True)
+  medium = messages.StringField(19, repeated=True)
+  upc = messages.StringField(20, repeated=True)
+  score = messages.FloatField(21)
 
 class ItemCollection(messages.Message):
   """Collection of Items."""
@@ -42,8 +63,25 @@ class CatalogApi(remote.Service):
     return Item(
       id=result['id'], 
       title=result.get('title_display',[]),
+      subtitle=result.get('subtitle_display',[]),
       format=result.get('format_facet',[]),
-      library=result.get('library_facet',[])
+      library=result.get('library_facet',[]),
+      barcode=result.get('barcode_facet',[]),
+      oclc=result.get('oclc_display',[]),
+      author=result.get('author_display',[]),
+      isbn=result.get('isbn_display',[]),
+      published_date=result.get('published_date_display',[]),
+      supplemental_url=result.get('url_supp_display',[]),
+      call_number=result.get('call_number_display',[]),
+      publisher=result.get('published_display',[]),
+      location=result.get('location2_facet',[]),
+      source=result.get('source_facet',[]),
+      date_indexed=result.get('date_first_indexed_facet',[]),
+      url=result.get('url_display',[]),
+      series_title=result.get('series_title_facet',[]),
+      medium=result.get('medium_display',[]),
+      upc=result.get('upc_display',[]),
+      score=result.get('score',0.0)
     )
 
   def load_results(self, results):
@@ -70,8 +108,8 @@ class CatalogApi(remote.Service):
                     name='search'
   )
   def search(self, request):
-    """ Queries the Library's catalog and digital collections """
-    try:
+#    """ Queries the Library's catalog and digital collections """
+#    try:
       params = [
         ('q',request.query),
         ('per_page',request.per_page),
@@ -93,8 +131,8 @@ class CatalogApi(remote.Service):
       collection = self.load_results(results)
       self.cache_collection(collection)
       return collection
-    except:
-      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
+#    except:
+#      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
 
   ID_RESOURCE = endpoints.ResourceContainer(
       message_types.VoidMessage,
@@ -109,6 +147,27 @@ class CatalogApi(remote.Service):
     except (IndexError, TypeError):
       raise endpoints.NotFoundException('Greeting %s not found.' %
                                         (request.id,))
+
+@an_api.api_class(
+  resource_name="repository",
+  path='repository'
+)
+class RepositoryAPI(remote.Service):
+
+  IMAGE_RESOURCE = endpoints.ResourceContainer(
+    message_types.VoidMessage,
+    id=messages.StringField(1),
+    region=messages.StringField(2)
+  )
+  @endpoints.method(IMAGE_RESOURCE, Image,
+                    path='image/{id}', http_method='GET',
+                    name='get_image')
+  def get(self, request):
+    """ Gets an image from the digital repo """
+    try:
+      return None
+    except:
+      raise endpoints.InternalServerErrorException('Something went wrong with this image request')
 
 @an_api.api_class(
   resource_name='directory',
