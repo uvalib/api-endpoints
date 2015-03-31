@@ -152,15 +152,15 @@ class CatalogApi(remote.Service):
                     path='get_item/{id}', http_method='GET',
                     name='get_item')
   def get_item(self, request):
-#    """ Gets an item from the catalog """
-#    try:
+    """ Gets an item from the catalog """
+    try:
       item = self.get_cached_item(request.id)
       if item is not None:
         return item
       else:
         raise endpoints.NotFoundException('I could not find that Item, Sorry!')
-#    except:
-#      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
+    except:
+      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
 
 @an_api.api_class(
   resource_name="repository",
