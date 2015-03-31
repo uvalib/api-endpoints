@@ -1,4 +1,4 @@
-import urllib, urllib2, json, hashlib, logging
+import urllib, urllib2, json, hashlib, logging, time
 
 import endpoints
 from protorpc import messages
@@ -95,8 +95,15 @@ class CatalogApi(remote.Service):
 
   def cache_collection(self, collection):
     coll = protojson.decode_message(ItemCollection, collection)
-    key_vals = dict( (x.id, x) for x in coll.items )
+    key_vals = dict( (x.id, protojson.encode_message(x)) for x in coll.items )
     memcache.set_multi(key_vals, key_prefix="items_")
+
+  def get_cached_item(self, id):
+    item = memcache.get("items_"+str(id))
+    if item is not None:
+      return protojson.decode_message(Item, item)
+    else:
+      return item
 
   SEARCH_RESOURCE = endpoints.ResourceContainer(
     message_types.VoidMessage,
@@ -127,11 +134,13 @@ class CatalogApi(remote.Service):
       results = memcache.get(urlkey)
       if results is None:
         results = json.loads( urllib2.urlopen(url).read() )
-        deferred.defer( memcache.set, urlkey, results )
+        memcache.set(urlkey, results)
       else:
         logging.info('Hit cache for catalog search request!')
       collection = self.load_results(results)
+
       deferred.defer( self.cache_collection, protojson.encode_message(collection) )
+
       return collection
     except:
       raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
@@ -140,15 +149,18 @@ class CatalogApi(remote.Service):
       message_types.VoidMessage,
       id=messages.StringField(1))
   @endpoints.method(ID_RESOURCE, Item,
-                    path='item/{id}', http_method='GET',
-                    name='get')
-  def get(self, request):
-    """ Gets an item from the catalog """
-    try:
-      return STORED_GREETINGS.items[request.id]
-    except (IndexError, TypeError):
-      raise endpoints.NotFoundException('Greeting %s not found.' %
-                                        (request.id,))
+                    path='get_item/{id}', http_method='GET',
+                    name='get_item')
+  def get_item(self, request):
+#    """ Gets an item from the catalog """
+#    try:
+      item = self.get_cached_item(request.id)
+      if item is not None:
+        return item
+      else:
+        raise endpoints.NotFoundException('I could not find that Item, Sorry!')
+#    except:
+#      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
 
 @an_api.api_class(
   resource_name="repository",
