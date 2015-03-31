@@ -4,9 +4,10 @@ import endpoints
 from protorpc import messages
 from protorpc import message_types
 from protorpc import remote
+from protorpc import protojson
 
 from google.appengine.api import memcache
-from google.appengine.api import taskqueue
+from google.appengine.ext import deferred
 
 
 package = 'UVALibrary'
@@ -53,6 +54,7 @@ STORED_GREETINGS = ItemCollection(items=[
     Item(id='goodbye world!'),
 ])
 
+
 @an_api.api_class(
   resource_name='catalog',
   path='catalog'
@@ -92,7 +94,8 @@ class CatalogApi(remote.Service):
     return collection
 
   def cache_collection(self, collection):
-    key_vals = dict( (x.id, x) for x in collection.items )
+    coll = protojson.decode_message(ItemCollection, collection)
+    key_vals = dict( (x.id, x) for x in coll.items )
     memcache.set_multi(key_vals, key_prefix="items_")
 
   SEARCH_RESOURCE = endpoints.ResourceContainer(
@@ -108,8 +111,8 @@ class CatalogApi(remote.Service):
                     name='search'
   )
   def search(self, request):
-#    """ Queries the Library's catalog and digital collections """
-#    try:
+    """ Queries the Library's catalog and digital collections """
+    try:
       params = [
         ('q',request.query),
         ('per_page',request.per_page),
@@ -119,20 +122,19 @@ class CatalogApi(remote.Service):
         facets = json.loads(request.facets)
         for facet in facets:
           params.append( ('f['+facet+'_facet][]',facets[facet]) )
-#          params['f['+facet+'_facet][]']=facets[facet]
       url = catalogURL + '?' + urllib.urlencode(params)
       urlkey = hashlib.sha1(url).hexdigest()
       results = memcache.get(urlkey)
       if results is None:
         results = json.loads( urllib2.urlopen(url).read() )
-        memcache.set(key=urlkey, value=results)
+        deferred.defer( memcache.set, urlkey, results )
       else:
         logging.info('Hit cache for catalog search request!')
       collection = self.load_results(results)
-      self.cache_collection(collection)
+      deferred.defer( self.cache_collection, protojson.encode_message(collection) )
       return collection
-#    except:
-#      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
+    except:
+      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
 
   ID_RESOURCE = endpoints.ResourceContainer(
       message_types.VoidMessage,

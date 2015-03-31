@@ -4,7 +4,15 @@ runtime: python27
 threadsafe: true
 api_version: 1
 
+builtins:
+- deferred: on
+
 handlers:
+# Deferred handler
+- url: /_ah/queue/deferred
+  script: google.appengine.ext.deferred.deferred.application
+  login: admin
+
 # Endpoints handler
 - url: /_ah/spi/.*
   script: uvalibrary_api.APPLICATION
