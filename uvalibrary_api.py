@@ -1,4 +1,5 @@
-import urllib, urllib2, json, hashlib, logging, time
+import urllib, urllib2, json, hashlib, logging, time, re
+import xml.etree.ElementTree as ET
 
 import endpoints
 from protorpc import messages
@@ -8,7 +9,7 @@ from protorpc import protojson
 
 from google.appengine.api import memcache
 from google.appengine.ext import deferred
-
+from google.appengine.api import urlfetch
 
 package = 'UVALibrary'
 
@@ -19,6 +20,32 @@ an_api = endpoints.api(name="uvalibrary", version=api_version)
 class Image(messages.Message):
   """Image from the digital repo"""
   id = messages.StringField(1, required=True)
+
+class Copy(messages.Message):
+  copy_number = messages.StringField(1)
+  current_periodical = messages.BooleanField(2)
+  barcode = messages.StringField(3)
+  shadowed = messages.BooleanField(4, default=False)
+  circulate = messages.BooleanField(5, default=True)
+  current_location = messages.StringField(6)
+  current_location_code = messages.StringField(7)
+  home_location = messages.StringField(8)
+  home_location_code = messages.StringField(9)
+  item_type_code = messages.StringField(10)
+  last_checkout = messages.StringField(11)
+
+class Holding(messages.Message):
+  call_number = messages.StringField(1)
+  call_number_normalized = messages.StringField(2)
+  call_sequence = messages.StringField(3)
+  can_hold = messages.BooleanField(4, default=True)
+  shadowed = messages.BooleanField(5, default=False)
+  copies = messages.MessageField(Copy, 6, repeated=True)
+  library = messages.StringField(7)
+  library_code = messages.StringField(8)
+  deliverable = messages.BooleanField(9, default=False)
+  holdable = messages.BooleanField(10, default=False)
+  remote = messages.BooleanField(11, default=False)
 
 class Item(messages.Message):
   """Item from the catalog."""
@@ -43,6 +70,9 @@ class Item(messages.Message):
   medium = messages.StringField(19, repeated=True)
   upc = messages.StringField(20, repeated=True)
   score = messages.FloatField(21)
+  can_hold = messages.BooleanField(22, default=True)
+  can_hold_message = messages.StringField(23)
+  holdings = messages.MessageField(Holding, 24, repeated=True)
 
 class ItemCollection(messages.Message):
   """Collection of Items."""
@@ -86,6 +116,72 @@ class CatalogApi(remote.Service):
       score=result.get('score',0.0)
     )
 
+  def load_holdings(self, holdings_result, item):
+    root = ET.fromstring(holdings_result.content)
+    can_hold = root.find('canHold')
+    if can_hold:
+      item.can_hold = can_hold.attrib.get('value',"yes") != "no"
+      item.can_hold_message = can_hold.find('message').text
+    holdings = root.findall('holding')
+    if len(holdings) > 0:
+      item.holdings = []
+      for holding_info in holdings:
+        holding = Holding()
+        holding.call_number = holding_info.attrib.get('callNumber','')
+        holding.call_number_normalized = holding_info.find('shelvingKey').text
+        holding.call_sequence = holding_info.attrib.get('callSequence','')
+        holding.can_hold = holding_info.attrib.get('holdable','true') != "false"
+        holding.shadowed = holding_info.attrib.get('shadowed','true') != "false"
+        holding.copies = []
+        for copy_info in holding_info.findall('copy'):
+          copy = Copy()
+          copy.copy_number = copy_info.attrib.get('copyNumber','')
+          copy.current_periodical = copy_info.attrib.get('currentPeriodical','true') != "false"
+          copy.barcode = copy_info.attrib.get('barcode','')
+          copy.shadowed = copy_info.attrib.get('shadowed','true') != "false"
+          copy.circulate = copy_info.find('circulate') == "Y"
+          current_loc = copy_info.find('currentLocation')
+          copy.current_location = current_loc.find('name').text
+          copy.current_location_code = current_loc.attrib.get('code','')
+          home_loc = copy_info.find('homeLocation')
+          copy.home_location = home_loc.find('name').text
+          copy.home_location_code = home_loc.attrib.get('code','')
+          copy.item_type_code = copy_info.find('itemType').attrib.get('code','')
+          copy.last_checkout = copy_info.find('lastCheckout').text
+          holding.copies.append(copy)
+        library_info = holding_info.find('library')
+        holding.library = library_info.find('name').text
+        holding.library_code = library_info.attrib.get('code','')
+        holding.deliverable = library_info.find('deliverable').text != "false"
+        holding.holdable = library_info.find('holdable').text != "false"
+        holding.remote = library_info.find('remote').text != "false"
+        item.holdings.append(holding)
+
+  def get_availability(self, collection):
+    # For each item, get the availability
+    def handle_result(rpc, item):
+      logging.info(item.title)
+      result = rpc.get_result()
+      self.load_holdings(result, item)
+
+    # Use a helper function to define the scope of the callback.
+    def create_callback(rpc, item):
+      return lambda: handle_result(rpc, item)
+
+    rpcs = []
+    for item in collection.items:
+      if re.match(r'u\d+$', item.id) is not None:
+        url = "http://search.lib.virginia.edu/catalog/"+item.id+"/firehose"
+        logging.info(url)
+        rpc = urlfetch.create_rpc()
+        rpc.callback = create_callback(rpc, item)
+        urlfetch.make_fetch_call(rpc, url)
+        rpcs.append(rpc)
+
+    # Finish all RPCs, and let callbacks process the results.
+    for rpc in rpcs:
+      rpc.wait()
+
   def load_results(self, results):
     collection = ItemCollection()
     collection.count = int(results['response']['numFound'])
@@ -110,7 +206,8 @@ class CatalogApi(remote.Service):
     query=messages.StringField(1, default=''),
     per_page=messages.IntegerField(2, default=10),
     page=messages.IntegerField(3, default=0),
-    facets=messages.StringField(4)
+    facets=messages.StringField(4),
+    availability=messages.BooleanField(5, default=False)
   )
   @endpoints.method(SEARCH_RESOURCE, ItemCollection,
                     path='search', 
@@ -118,8 +215,8 @@ class CatalogApi(remote.Service):
                     name='search'
   )
   def search(self, request):
-    """ Queries the Library's catalog and digital collections """
-    try:
+#    """ Queries the Library's catalog and digital collections """
+#    try:
       params = [
         ('q',request.query),
         ('per_page',request.per_page),
@@ -138,12 +235,12 @@ class CatalogApi(remote.Service):
       else:
         logging.info('Hit cache for catalog search request!')
       collection = self.load_results(results)
-
       deferred.defer( self.cache_collection, protojson.encode_message(collection) )
-
+      if request.availability:
+        self.get_availability(collection)
       return collection
-    except:
-      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
+#    except:
+#      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
 
   ID_RESOURCE = endpoints.ResourceContainer(
       message_types.VoidMessage,
