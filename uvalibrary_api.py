@@ -15,6 +15,7 @@ package = 'UVALibrary'
 
 api_version = 'v0.1'
 catalogURL = "http://search.lib.virginia.edu/catalog.json"
+directionsURL = "https://spreadsheets.google.com/feeds/list/1FTA9scrRR17pmeRZNPOXZAYhgeG-40FcJp6Ry5_O7Gw/1/public/full?alt=json"
 an_api = endpoints.api(name="uvalibrary", version=api_version)
 
 class Image(messages.Message):
@@ -78,6 +79,22 @@ class ItemCollection(messages.Message):
   """Collection of Items."""
   count = messages.IntegerField(1, default=0)
   items = messages.MessageField(Item, 2, repeated=True)
+
+class Direction(messages.Message):
+  library = messages.StringField(1)
+  title = messages.StringField(2)
+  location_key = messages.StringField(3)
+  format_key = messages.StringField(4)
+  call_key = messages.StringField(5)
+  start_call_number = messages.StringField(6)
+  end_call_number = messages.StringField(7)
+  floor = messages.StringField(8)
+  area = messages.StringField(9)
+  direction = messages.StringField(10)
+
+class DirectionCollection(messages.Message):
+  """Collection of Directions."""
+  directions = messages.MessageField(Direction, 1, repeated=True)
 
 STORED_GREETINGS = ItemCollection(items=[
     Item(id='hello world!'),
@@ -157,7 +174,8 @@ class CatalogApi(remote.Service):
         holding.remote = library_info.find('remote').text != "false"
         item.holdings.append(holding)
 
-  def get_availability(self, collection):
+  "do this ascyn so we don't have to wait"
+  def get_collection_availability(self, collection):
     # For each item, get the availability
     def handle_result(rpc, item):
       logging.info(item.title)
@@ -215,8 +233,8 @@ class CatalogApi(remote.Service):
                     name='search'
   )
   def search(self, request):
-#    """ Queries the Library's catalog and digital collections """
-#    try:
+    """ Queries the Library's catalog and digital collections """
+    try:
       params = [
         ('q',request.query),
         ('per_page',request.per_page),
@@ -239,8 +257,8 @@ class CatalogApi(remote.Service):
       if request.availability:
         self.get_availability(collection)
       return collection
-#    except:
-#      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
+    except:
+      raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
 
   ID_RESOURCE = endpoints.ResourceContainer(
       message_types.VoidMessage,
@@ -258,6 +276,46 @@ class CatalogApi(remote.Service):
         raise endpoints.NotFoundException('I could not find that Item, Sorry!')
     except:
       raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
+
+@an_api.api_class(
+  resource_name="directions",
+  path="directions"
+)
+class Directions(remote.Service):
+  
+  def load_directions(self, results):
+    directs = DirectionCollection()
+    for entry in results.get('feed',{'entry':[]})['entry']:
+      direct = Direction()
+      direct.library = 'alderman'
+      direct.title = entry['gsx$title']['$t']
+      direct.location_key = entry['gsx$lockey']['$t']
+      direct.format_key = entry['gsx$formatkey']['$t']
+      direct.call_key = entry['gsx$callkey']['$t']
+      direct.start_call_number = entry['gsx$start']['$t']
+      direct.end_call_number = entry['gsx$end']['$t']
+      direct.floor = entry['gsx$floor']['$t']
+      direct.area = entry['gsx$area']['$t']
+      direct.direction = entry['gsx$direct']['$t']
+      directs.directions.append(direct)
+    return directs
+
+  @endpoints.method(message_types.VoidMessage, DirectionCollection,
+                    path='list', 
+                    http_method='GET',
+                    name='list'
+  )
+  def list(self, unused_request):
+    """ Listing of all the (documented) directions to physical items in the library """
+    directs = memcache.get('item-directions')
+    if directs is None:
+        results = json.loads( urllib2.urlopen(directionsURL).read() )
+        directs = self.load_directions(results)
+#        memcache.set('item-directions', directs.encode_message(directs))
+        return directs
+    else:
+        logging.info('Hit cache for directions list request!')
+        return protojson.decode_message(DirectionCollection, directs)
 
 @an_api.api_class(
   resource_name="repository",
