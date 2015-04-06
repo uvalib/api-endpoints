@@ -16,11 +16,24 @@ package = 'UVALibrary'
 api_version = 'v0.1'
 catalogURL = "http://search.lib.virginia.edu/catalog.json"
 directionsURL = "https://spreadsheets.google.com/feeds/list/1FTA9scrRR17pmeRZNPOXZAYhgeG-40FcJp6Ry5_O7Gw/1/public/full?alt=json"
+notAvailableLocations = ['CHECKEDOUT','INTERNET']
 an_api = endpoints.api(name="uvalibrary", version=api_version)
 
 class Image(messages.Message):
   """Image from the digital repo"""
   id = messages.StringField(1, required=True)
+
+class Direction(messages.Message):
+  library = messages.StringField(1)
+  title = messages.StringField(2)
+  location_key = messages.StringField(3)
+  format_key = messages.StringField(4)
+  call_key = messages.StringField(5)
+  start_call_number = messages.StringField(6)
+  end_call_number = messages.StringField(7)
+  floor = messages.StringField(8)
+  area = messages.StringField(9)
+  direction = messages.StringField(10)
 
 class Copy(messages.Message):
   copy_number = messages.StringField(1)
@@ -34,6 +47,7 @@ class Copy(messages.Message):
   home_location_code = messages.StringField(9)
   item_type_code = messages.StringField(10)
   last_checkout = messages.StringField(11)
+  direction = messages.MessageField(Direction, 12)
 
 class Holding(messages.Message):
   call_number = messages.StringField(1)
@@ -80,18 +94,6 @@ class ItemCollection(messages.Message):
   count = messages.IntegerField(1, default=0)
   items = messages.MessageField(Item, 2, repeated=True)
 
-class Direction(messages.Message):
-  library = messages.StringField(1)
-  title = messages.StringField(2)
-  location_key = messages.StringField(3)
-  format_key = messages.StringField(4)
-  call_key = messages.StringField(5)
-  start_call_number = messages.StringField(6)
-  end_call_number = messages.StringField(7)
-  floor = messages.StringField(8)
-  area = messages.StringField(9)
-  direction = messages.StringField(10)
-
 class DirectionCollection(messages.Message):
   """Collection of Directions."""
   directions = messages.MessageField(Direction, 1, repeated=True)
@@ -133,13 +135,14 @@ class CatalogApi(remote.Service):
       score=result.get('score',0.0)
     )
 
-  def load_holdings(self, holdings_result, item):
+  def load_holdings(self, holdings_result, item, load_directions):
     root = ET.fromstring(holdings_result.content)
     can_hold = root.find('canHold')
     if can_hold:
       item.can_hold = can_hold.attrib.get('value',"yes") != "no"
       item.can_hold_message = can_hold.find('message').text
     holdings = root.findall('holding')
+    directions = Directions()
     if len(holdings) > 0:
       item.holdings = []
       for holding_info in holdings:
@@ -158,29 +161,30 @@ class CatalogApi(remote.Service):
           copy.shadowed = copy_info.attrib.get('shadowed','true') != "false"
           copy.circulate = copy_info.find('circulate') == "Y"
           current_loc = copy_info.find('currentLocation')
+          library_info = holding_info.find('library')
+          holding.library = library_info.find('name').text
+          holding.library_code = library_info.attrib.get('code','')
           copy.current_location = current_loc.find('name').text
           copy.current_location_code = current_loc.attrib.get('code','')
+          if copy.current_location_code not in notAvailableLocations and load_directions:
+            copy.direction = directions.get_direction(holding.library_code, holding.call_number_normalized, item.format[0], copy.current_location)
           home_loc = copy_info.find('homeLocation')
           copy.home_location = home_loc.find('name').text
           copy.home_location_code = home_loc.attrib.get('code','')
           copy.item_type_code = copy_info.find('itemType').attrib.get('code','')
           copy.last_checkout = copy_info.find('lastCheckout').text
           holding.copies.append(copy)
-        library_info = holding_info.find('library')
-        holding.library = library_info.find('name').text
-        holding.library_code = library_info.attrib.get('code','')
         holding.deliverable = library_info.find('deliverable').text != "false"
         holding.holdable = library_info.find('holdable').text != "false"
         holding.remote = library_info.find('remote').text != "false"
         item.holdings.append(holding)
 
   "do this ascyn so we don't have to wait"
-  def get_collection_availability(self, collection):
+  def get_collection_availability(self, collection, load_directions):
     # For each item, get the availability
     def handle_result(rpc, item):
-      logging.info(item.title)
       result = rpc.get_result()
-      self.load_holdings(result, item)
+      self.load_holdings(result, item, load_directions)
 
     # Use a helper function to define the scope of the callback.
     def create_callback(rpc, item):
@@ -225,7 +229,8 @@ class CatalogApi(remote.Service):
     per_page=messages.IntegerField(2, default=10),
     page=messages.IntegerField(3, default=0),
     facets=messages.StringField(4),
-    availability=messages.BooleanField(5, default=False)
+    availability=messages.BooleanField(5, default=False),
+    directions=messages.BooleanField(6, default=False)
   )
   @endpoints.method(SEARCH_RESOURCE, ItemCollection,
                     path='search', 
@@ -255,7 +260,8 @@ class CatalogApi(remote.Service):
       collection = self.load_results(results)
       deferred.defer( self.cache_collection, protojson.encode_message(collection) )
       if request.availability:
-        self.get_availability(collection)
+        self.get_collection_availability(collection, request.directions)
+
       return collection
     except:
       raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
@@ -282,9 +288,26 @@ class CatalogApi(remote.Service):
   path="directions"
 )
 class Directions(remote.Service):
+
+  def get_direction(self, library, norm_call_number="", format_key="", location_key=""):
+    norm_call_number = norm_call_number.upper()
+    format_key = format_key.upper()
+    location_key = location_key.upper()
+    if not hasattr(self, 'directions'):
+      logging.info('getting directions!')
+      self.list(message_types.VoidMessage())
+    for direction in self.directions.directions:
+      if direction.library.lower() == library.lower():
+        if direction.location_key and location_key and direction.location_key.lower() in location_key.lower():
+          return direction
+        if direction.format_key and format_key and direction.call_key and norm_call_number and direction.format_key.lower() in format_key.lower() and direction.call_key.lower() in norm_call_number.lower():
+          return direction
+        if norm_call_number and direction.start_call_number and direction.end_call_number and norm_call_number.lower() >= direction.start_call_number.lower() and norm_call_number.lower() <= direction.end_call_number.lower():
+          return direction
+    return None
   
   def load_directions(self, results):
-    directs = DirectionCollection()
+    self.directions = DirectionCollection()
     for entry in results.get('feed',{'entry':[]})['entry']:
       direct = Direction()
       direct.library = 'alderman'
@@ -297,8 +320,8 @@ class Directions(remote.Service):
       direct.floor = entry['gsx$floor']['$t']
       direct.area = entry['gsx$area']['$t']
       direct.direction = entry['gsx$direct']['$t']
-      directs.directions.append(direct)
-    return directs
+      self.directions.directions.append(direct)
+    return self.directions
 
   @endpoints.method(message_types.VoidMessage, DirectionCollection,
                     path='list', 
@@ -311,11 +334,12 @@ class Directions(remote.Service):
     if directs is None:
         results = json.loads( urllib2.urlopen(directionsURL).read() )
         directs = self.load_directions(results)
-#        memcache.set('item-directions', directs.encode_message(directs))
+        memcache.set('item-directions', protojson.encode_message(directs))
         return directs
     else:
         logging.info('Hit cache for directions list request!')
-        return protojson.decode_message(DirectionCollection, directs)
+        self.directions = protojson.decode_message(DirectionCollection, directs)
+        return self.directions
 
 @an_api.api_class(
   resource_name="repository",
