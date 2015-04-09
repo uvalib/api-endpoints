@@ -27,3 +27,13 @@ class TestCases(unittest.TestCase):
     # Make sure we have some results
     self.assertIsNotNone( resp.json.get('count', None) )
     self.assertTrue( resp.json['count'] > 0 )
+
+  def testDirections(self):
+    app = endpoints.api_server([uvalibrary_api.Directions], restricted=False)
+    testapp = webtest.TestApp(app)
+
+    # Empty direction list query
+    msg = {}
+    resp = testapp.post_json('/_ah/spi/Directions.list', msg)
+    # Make sure we have some results
+    self.assertTrue( len(resp.json.get('directions',[])) > 0 )
