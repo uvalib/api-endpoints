@@ -98,6 +98,30 @@ class DirectionCollection(messages.Message):
   """Collection of Directions."""
   directions = messages.MessageField(Direction, 1, repeated=True)
 
+class Operator(messages.Enum):
+  AND = 1
+  OR = 2
+
+class SortOrder(messages.Enum):
+  relevancy = 1
+  received = 2
+  published = 3
+  published_a = 4
+  title = 5
+  author = 6
+
+class AdvancedSearch(messages.Message):
+  operator=messages.EnumField(Operator, 1, default='AND')
+  author=messages.StringField(2, default='')
+  title=messages.StringField(3, default='')
+  journal_title=messages.StringField(4, default='')
+  subject=messages.StringField(5, default='')
+  keywords=messages.StringField(6, default='')
+  call_number=messages.StringField(7, default='')
+  publisher=messages.StringField(8, default='')
+  year_published_start=messages.StringField(9, default='')
+  year_published_end=messages.StringField(10, default='')
+
 STORED_GREETINGS = ItemCollection(items=[
     Item(id='hello world!'),
     Item(id='goodbye world!'),
@@ -230,7 +254,9 @@ class CatalogApi(remote.Service):
     page=messages.IntegerField(3, default=0),
     facets=messages.StringField(4),
     availability=messages.BooleanField(5, default=False),
-    directions=messages.BooleanField(6, default=False)
+    directions=messages.BooleanField(6, default=False),
+    advanced=messages.MessageField(AdvancedSearch, 7),
+    sort_order=messages.EnumField(SortOrder, 8, default='relevancy')
   )
   @endpoints.method(SEARCH_RESOURCE, ItemCollection,
                     path='search', 
@@ -240,16 +266,36 @@ class CatalogApi(remote.Service):
   def search(self, request):
     """ Queries the Library's catalog and digital collections """
     try:
-      params = [
-        ('q',request.query),
-        ('per_page',request.per_page),
-        ('page',request.page)
-      ]
+      advanced = request.advanced and (request.advanced.author or request.advanced.title or request.advanced.journal_title or request.advanced.subject or request.advanced.keywords or request.advanced.call_number or request.advanced.publisher or request.advanced.year_published_start or request.advanced.year_published_end)
+      if advanced:
+        params = [
+          ('op',request.advanced.operator),
+          ('author',request.advanced.author),
+          ('title',request.advanced.title),
+          ('journal',request.advanced.journal_title),
+          ('subject',request.advanced.subject),
+          ('keyword',request.advanced.keywords),
+          ('call_number',request.advanced.call_number),
+          ('published',request.advanced.publisher),
+          ('publication_date_start',request.advanced.year_published_start),
+          ('publication_date_end',request.advanced.year_published_end),
+          ('sort_key',request.sort_order),
+          ('search_field','advanced')
+        ]
+      else:
+        params = [
+          ('q',request.query),
+          ('per_page',request.per_page),
+          ('page',request.page),
+          ('sort_key',request.sort_order)
+        ]
+
       if request.facets:
         facets = json.loads(request.facets)
         for facet in facets:
           params.append( ('f['+facet+'_facet][]',facets[facet]) )
       url = catalogURL + '?' + urllib.urlencode(params)
+      logging.info('URL: '+url)
       urlkey = hashlib.sha1(url).hexdigest()
       results = memcache.get(urlkey)
       if results is None:
@@ -261,7 +307,6 @@ class CatalogApi(remote.Service):
       deferred.defer( self.cache_collection, protojson.encode_message(collection) )
       if request.availability:
         self.get_collection_availability(collection, request.directions)
-
       return collection
     except:
       raise endpoints.InternalServerErrorException('Something went wrong with this catalog request!')
