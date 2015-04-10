@@ -1,4 +1,4 @@
-import urllib, urllib2, json, hashlib, logging, time, re
+import urllib, urllib2, json, hashlib, logging, time, re, itertools
 import xml.etree.ElementTree as ET
 
 import endpoints
@@ -62,6 +62,32 @@ class Holding(messages.Message):
   holdable = messages.BooleanField(10, default=False)
   remote = messages.BooleanField(11, default=False)
 
+class Facet(messages.Message):
+  """Facet count from the catalog."""
+  value = messages.StringField(1, required=True)
+  count = messages.IntegerField(2, required=True)
+
+class Facets(messages.Message):
+  """Facet from the catalog."""
+  library = messages.MessageField(Facet, 1, repeated=True)
+  location = messages.MessageField(Facet, 2, repeated=True)
+  library_location = messages.MessageField(Facet, 3, repeated=True)
+  published_date = messages.MessageField(Facet, 4, repeated=True)
+  format = messages.MessageField(Facet, 5, repeated=True)
+  call_number = messages.MessageField(Facet, 6, repeated=True)
+  digital_collection = messages.MessageField(Facet, 7, repeated=True)
+  subject = messages.MessageField(Facet, 8, repeated=True)
+  language = messages.MessageField(Facet, 9, repeated=True)
+  source = messages.MessageField(Facet, 10, repeated=True)
+  series = messages.MessageField(Facet, 11, repeated=True)
+  recordings_scores = messages.MessageField(Facet, 12, repeated=True)
+  recording_format = messages.MessageField(Facet, 13, repeated=True)
+  instrument = messages.MessageField(Facet, 14, repeated=True)
+  music_composition_era = messages.MessageField(Facet, 15, repeated=True)
+  author = messages.MessageField(Facet, 16, repeated=True)
+  region = messages.MessageField(Facet, 17, repeated=True)
+  video_genre = messages.MessageField(Facet, 18, repeated=True)
+
 class Item(messages.Message):
   """Item from the catalog."""
   id = messages.StringField(1, required=True)
@@ -93,6 +119,7 @@ class ItemCollection(messages.Message):
   """Collection of Items."""
   count = messages.IntegerField(1, default=0)
   items = messages.MessageField(Item, 2, repeated=True)
+  facets = messages.MessageField(Facets, 25)
 
 class DirectionCollection(messages.Message):
   """Collection of Directions."""
@@ -203,6 +230,39 @@ class CatalogApi(remote.Service):
         holding.remote = library_info.find('remote').text != "false"
         item.holdings.append(holding)
 
+  def load_facet(self, facet):
+    values = []
+    # facet values/counts come in a list/array, convert to dict
+    d = dict(itertools.izip_longest(*[iter(facet)] * 2, fillvalue=""))
+    for key in d:
+      f = Facet()
+      f.value = key
+      f.count = int(d[key])
+      values.append(f)
+    return values
+
+  def load_facets(self, facets):
+    f_val = Facets()
+    f_val.library = self.load_facet( facets.get('library_facet',[]) )
+    f_val.location = self.load_facet( facets.get('location_facet',[]) )
+    f_val.library_location = self.load_facet( facets.get('location2_facet',[]) )
+    f_val.published_date = self.load_facet( facets.get('published_date_facet',[]) )
+    f_val.format = self.load_facet( facets.get('format_facet',[]) )
+    f_val.call_number = self.load_facet( facets.get('call_number_facet',[]) )
+    f_val.digital_collection = self.load_facet( facets.get('digital_collection_facet',[]) )
+    f_val.subject = self.load_facet( facets.get('subject_facet',[]) )
+    f_val.language = self.load_facet( facets.get('language_facet',[]) )
+    f_val.source = self.load_facet( facets.get('source_facet',[]) )
+    f_val.series = self.load_facet( facets.get('series_title_facet',[]) )
+    f_val.recordings_scores = self.load_facet( facets.get('recordings_and_scores_facet',[]) )
+    f_val.recording_format = self.load_facet( facets.get('recording_format_facet',[]) )
+    f_val.instrument = self.load_facet( facets.get('instrument_facet',[]) )
+    f_val.music_composition_era = self.load_facet( facets.get('music_composition_era_facet',[]) )
+    f_val.author = self.load_facet( facets.get('author_facet',[]) )
+    f_val.region = self.load_facet( facets.get('region_facet',[]) )
+    f_val.video_genre = self.load_facet( facets.get('video_genre_facet',[]) )
+    return f_val
+
   "do this ascyn so we don't have to wait"
   def get_collection_availability(self, collection, load_directions):
     # For each item, get the availability
@@ -233,6 +293,7 @@ class CatalogApi(remote.Service):
     collection.count = int(results['response']['numFound'])
     for item in results['response']['docs']:
       collection.items.append( self.load_result(item) )
+    collection.facets = self.load_facets(results['facet_counts']['facet_fields'])
     return collection
 
   def cache_collection(self, collection):
