@@ -137,18 +137,6 @@ class SortOrder(messages.Enum):
   title = 5
   author = 6
 
-class AdvancedSearch(messages.Message):
-  operator=messages.EnumField(Operator, 1, default='AND')
-  author=messages.StringField(2, default='')
-  title=messages.StringField(3, default='')
-  journal_title=messages.StringField(4, default='')
-  subject=messages.StringField(5, default='')
-  keywords=messages.StringField(6, default='')
-  call_number=messages.StringField(7, default='')
-  publisher=messages.StringField(8, default='')
-  year_published_start=messages.StringField(9, default='')
-  year_published_end=messages.StringField(10, default='')
-
 STORED_GREETINGS = ItemCollection(items=[
     Item(id='hello world!'),
     Item(id='goodbye world!'),
@@ -316,8 +304,17 @@ class CatalogApi(remote.Service):
     facets=messages.StringField(4),
     availability=messages.BooleanField(5, default=False),
     directions=messages.BooleanField(6, default=False),
-    advanced=messages.MessageField(AdvancedSearch, 7),
-    sort_order=messages.EnumField(SortOrder, 8, default='relevancy')
+    operator=messages.EnumField(Operator, 7, default='AND'),
+    author=messages.StringField(8, default=''),
+    title=messages.StringField(9, default=''),
+    journal_title=messages.StringField(10, default=''),
+    subject=messages.StringField(11, default=''),
+    keywords=messages.StringField(12, default=''),
+    call_number=messages.StringField(13, default=''),
+    publisher=messages.StringField(14, default=''),
+    year_published_start=messages.StringField(15, default=''),
+    year_published_end=messages.StringField(16, default=''),
+    sort_order=messages.EnumField(SortOrder, 17, default='relevancy')
   )
   @endpoints.method(SEARCH_RESOURCE, ItemCollection,
                     path='search', 
@@ -327,29 +324,31 @@ class CatalogApi(remote.Service):
   def search(self, request):
     """ Queries the Library's catalog and digital collections """
     try:
-      advanced = request.advanced and (request.advanced.author or request.advanced.title or request.advanced.journal_title or request.advanced.subject or request.advanced.keywords or request.advanced.call_number or request.advanced.publisher or request.advanced.year_published_start or request.advanced.year_published_end)
-      if advanced:
-        params = [
-          ('op',request.advanced.operator),
-          ('author',request.advanced.author),
-          ('title',request.advanced.title),
-          ('journal',request.advanced.journal_title),
-          ('subject',request.advanced.subject),
-          ('keyword',request.advanced.keywords),
-          ('call_number',request.advanced.call_number),
-          ('published',request.advanced.publisher),
-          ('publication_date_start',request.advanced.year_published_start),
-          ('publication_date_end',request.advanced.year_published_end),
-          ('sort_key',request.sort_order),
-          ('search_field','advanced')
-        ]
-      else:
-        params = [
+      advanced = False
+      if request.title:
+        request.query=""
+        advanced = True
+      params = [
           ('q',request.query),
           ('per_page',request.per_page),
           ('page',request.page),
+          ('sort_key',request.sort_order),
+          # advanced params
+          ('op',request.operator),
+          ('author',request.author),
+          ('title',request.title),
+          ('journal',request.journal_title),
+          ('subject',request.subject),
+          ('keyword',request.keywords),
+          ('call_number',request.call_number),
+          ('published',request.publisher),
+          ('publication_date_start',request.year_published_start),
+          ('publication_date_end',request.year_published_end),
           ('sort_key',request.sort_order)
-        ]
+          #('search_field','advanced')
+      ]
+      if advanced:
+        params.append( ('search_field','advanced') )
 
       if request.facets:
         facets = json.loads(request.facets)
