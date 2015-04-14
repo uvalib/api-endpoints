@@ -345,15 +345,20 @@ class CatalogApi(remote.Service):
           ('publication_date_start',request.year_published_start),
           ('publication_date_end',request.year_published_end),
           ('sort_key',request.sort_order)
-          #('search_field','advanced')
       ]
       if advanced:
         params.append( ('search_field','advanced') )
 
+      # f[format_facet][]=Book&f[library_facet][]=Alderman
       if request.facets:
         facets = json.loads(request.facets)
         for facet in facets:
-          params.append( ('f['+facet+'_facet][]',facets[facet]) )
+          if isinstance(facets[facet], list):
+            for value in facets[facet]:
+              params.append( ('f['+facet+'_facet][]', str(value) ) )
+          else:
+            params.append( ('f['+facet+'_facet][]', str(facets[facet])) )
+
       url = catalogURL + '?' + urllib.urlencode(params)
       logging.info('URL: '+url)
       urlkey = hashlib.sha1(url).hexdigest()
