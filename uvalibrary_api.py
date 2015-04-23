@@ -199,7 +199,6 @@ class LibraryApi(remote.Service):
   def list(self, unused_request):
     """ Listing of all the libraries with info """
     libraries = memcache.get('libraries')
-    libraries = None
     if libraries is None:
         results = json.loads( urllib2.urlopen( librariesURL ).read() )
         libraries = self.load_libraries( results )
