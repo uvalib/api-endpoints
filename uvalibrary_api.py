@@ -16,6 +16,7 @@ package = 'UVALibrary'
 api_version = 'v0.1'
 catalogURL = "http://search.lib.virginia.edu/catalog.json"
 directionsURL = "https://spreadsheets.google.com/feeds/list/1FTA9scrRR17pmeRZNPOXZAYhgeG-40FcJp6Ry5_O7Gw/1/public/full?alt=json"
+librariesURL = "http://www.library.virginia.edu/api/get_recent_posts/?count=0&post_type=uvalib_library"
 notAvailableLocations = ['CHECKEDOUT','INTERNET']
 an_api = endpoints.api(name="uvalibrary", version=api_version)
 
@@ -137,11 +138,77 @@ class SortOrder(messages.Enum):
   title = 5
   author = 6
 
+class LibraryType(messages.Enum):
+  lab = 1
+  library = 2
+
+class Library(messages.Message):
+  id = messages.StringField(1, required=True)
+  title = messages.StringField(2, required=True)
+  description = messages.StringField(3)
+  excerpt = messages.StringField(4)
+  thumbnail_url = messages.StringField(5)
+  type = messages.EnumField(LibraryType, 6)
+  phone = messages.StringField(7)
+  email = messages.StringField(8)
+  feed = messages.StringField(9)
+  donor_title = messages.StringField(10)
+  donor_description = messages.StringField(11)
+  hours_calendar_id = messages.StringField(12)
+  events_calendar_id = messages.StringField(13)
+  floors = messages.StringField(14, repeated=True)
+  building_id = messages.StringField(15)
+  rooms = messages.StringField(16, repeated=True)
+
+class LibraryCollection(messages.Message):
+  libraries = messages.MessageField(Library, 1, repeated=True)
+
 STORED_GREETINGS = ItemCollection(items=[
     Item(id='hello world!'),
     Item(id='goodbye world!'),
 ])
 
+@an_api.api_class(
+  resource_name='library',
+  path='library'
+)
+class LibraryApi(remote.Service):
+  def load_libraries(self, results):
+    collection = LibraryCollection()
+    collection.libraries = [Library(id=lib['slug'], 
+                                    title=lib.get('title_plain',''),
+                                    description=lib.get('content',''),
+                                    excerpt=lib.get('excerpt',''),
+                                    thumbnail_url=lib.get('thumbnail',''),
+                                    type=lib['library_type'][0]['name']=='Lab' and LibraryType.lab or LibraryType.library,
+                                    phone=lib['additional_info'].get('phone_number',''),
+                                    email=lib['additional_info'].get('email_address',''),
+                                    feed=lib['additional_info'].get('feed_url',''),
+                                    donor_title=lib['additional_info'].get('donor_title',''),
+                                    donor_description=lib['additional_info'].get('donor_description',''),
+                                    hours_calendar_id=lib['additional_info'].get('hours_calendar_id',''),
+                                    events_calendar_id=lib['additional_info'].get('events_calendar_id','')
+                                    ) for lib in results['posts']]
+    return collection
+
+  @endpoints.method(message_types.VoidMessage, LibraryCollection,
+                    path='list', 
+                    http_method='GET',
+                    name='list'
+  )
+  def list(self, unused_request):
+    """ Listing of all the libraries with info """
+    libraries = memcache.get('libraries')
+    libraries = None
+    if libraries is None:
+        results = json.loads( urllib2.urlopen( librariesURL ).read() )
+        libraries = self.load_libraries( results )
+        memcache.set('libraries', protojson.encode_message(libraries))
+        return libraries
+    else:
+        logging.info('Hit cache for libraries list request!')
+        libraries = protojson.decode_message(LibraryCollection, libraries)
+        return libraries
 
 @an_api.api_class(
   resource_name='catalog',
