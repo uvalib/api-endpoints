@@ -115,6 +115,7 @@ class Item(messages.Message):
   can_hold = messages.BooleanField(22, default=True)
   can_hold_message = messages.StringField(23)
   holdings = messages.MessageField(Holding, 24, repeated=True)
+  cover_image_url = messages.StringField(25)
 
 class ItemCollection(messages.Message):
   """Collection of Items."""
@@ -237,7 +238,8 @@ class CatalogApi(remote.Service):
       series_title=result.get('series_title_facet',[]),
       medium=result.get('medium_display',[]),
       upc=result.get('upc_display',[]),
-      score=result.get('score',0.0)
+      score=result.get('score',0.0),
+      cover_image_url="http://search.lib.virginia.edu/catalog/"+result['id']+"/image.jpg"
     )
 
   def load_holdings(self, holdings_result, item, load_directions):
@@ -449,7 +451,7 @@ class CatalogApi(remote.Service):
                     path='get_item/{id}', http_method='GET',
                     name='get_item')
   def get_item(self, request):
-    """ Gets an item from the catalog """
+    """ Gets an item from the catalog (currently only after item has been in a search result) """
     try:
       item = self.get_cached_item(request.id)
       if item is not None:
@@ -543,15 +545,6 @@ class RepositoryAPI(remote.Service):
   path='directory'
 )
 class DirectoryAPI(remote.Service):
-
-  @endpoints.method(message_types.VoidMessage, ItemCollection,
-                    path='search', 
-                    http_method='GET',
-                    name='search'
-  )
-  def search(self, unused_request):
-    """ Queries the Library's directory """
-    return STORED_GREETINGS
 
   @endpoints.method(message_types.VoidMessage, ItemCollection,
                     path='list', 
