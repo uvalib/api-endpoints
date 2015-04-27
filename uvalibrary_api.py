@@ -370,19 +370,20 @@ class CatalogApi(remote.Service):
     per_page=messages.IntegerField(2, default=10),
     page=messages.IntegerField(3, default=0),
     facets=messages.StringField(4),
-    availability=messages.BooleanField(5, default=False),
-    directions=messages.BooleanField(6, default=False),
-    operator=messages.EnumField(Operator, 7, default='AND'),
-    author=messages.StringField(8, default=''),
-    title=messages.StringField(9, default=''),
-    journal_title=messages.StringField(10, default=''),
-    subject=messages.StringField(11, default=''),
-    keywords=messages.StringField(12, default=''),
-    call_number=messages.StringField(13, default=''),
-    publisher=messages.StringField(14, default=''),
-    year_published_start=messages.StringField(15, default=''),
-    year_published_end=messages.StringField(16, default=''),
-    sort_order=messages.EnumField(SortOrder, 17, default='relevancy')
+    facets_inclusive=messages.StringField(5),
+    availability=messages.BooleanField(6, default=False),
+    directions=messages.BooleanField(7, default=False),
+    operator=messages.EnumField(Operator, 8, default='AND'),
+    author=messages.StringField(9, default=''),
+    title=messages.StringField(10, default=''),
+    journal_title=messages.StringField(11, default=''),
+    subject=messages.StringField(12, default=''),
+    keywords=messages.StringField(13, default=''),
+    call_number=messages.StringField(14, default=''),
+    publisher=messages.StringField(15, default=''),
+    year_published_start=messages.StringField(16, default=''),
+    year_published_end=messages.StringField(17, default=''),
+    sort_order=messages.EnumField(SortOrder, 18, default='relevancy')
   )
   @endpoints.method(SEARCH_RESOURCE, ItemCollection,
                     path='search', 
@@ -426,6 +427,14 @@ class CatalogApi(remote.Service):
               params.append( ('f['+facet+'_facet][]', str(value) ) )
           else:
             params.append( ('f['+facet+'_facet][]', str(facets[facet])) )
+      if request.facets_inclusive:
+        facets = json.loads(request.facets_inclusive)
+        for facet in facets:
+          if isinstance(facets[facet], list):
+            for value in facets[facet]:
+              params.append( ('f_inclusive['+facet+'_facet]['+str(value)+']', 1) )
+          else:
+            params.append( ('f_inclusive['+facet+'_facet]['+str(facets[facet])+']', 1) )
 
       url = catalogURL + '?' + urllib.urlencode(params)
       logging.info('URL: '+url)
