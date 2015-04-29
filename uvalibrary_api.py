@@ -201,7 +201,7 @@ class LibraryApi(remote.Service):
     """ Listing of all the libraries with info """
     libraries = memcache.get('libraries')
     if libraries is None:
-        results = json.loads( urllib2.urlopen( librariesURL ).read() )
+        results = json.loads( urlfetch.fetch(url=librariesURL, deadline=10).content )
         libraries = self.load_libraries( results )
         memcache.set('libraries', protojson.encode_message(libraries))
         return libraries
@@ -335,7 +335,7 @@ class CatalogApi(remote.Service):
       if re.match(r'u\d+$', item.id) is not None:
         url = "http://search.lib.virginia.edu/catalog/"+item.id+"/firehose"
         logging.info(url)
-        rpc = urlfetch.create_rpc()
+        rpc = urlfetch.create_rpc(deadline=60)
         rpc.callback = create_callback(rpc, item)
         urlfetch.make_fetch_call(rpc, url)
         rpcs.append(rpc)
@@ -346,6 +346,7 @@ class CatalogApi(remote.Service):
 
   def load_results(self, results):
     collection = ItemCollection()
+    logging.info(results)
     collection.count = int(results['response']['numFound'])
     for item in results['response']['docs']:
       collection.items.append( self.load_result(item) )
@@ -418,7 +419,6 @@ class CatalogApi(remote.Service):
       if advanced:
         params.append( ('search_field','advanced') )
 
-      # f[format_facet][]=Book&f[library_facet][]=Alderman
       if request.facets:
         facets = json.loads(request.facets)
         for facet in facets:
@@ -441,7 +441,7 @@ class CatalogApi(remote.Service):
       urlkey = hashlib.sha1(url).hexdigest()
       results = memcache.get(urlkey)
       if results is None:
-        results = json.loads( urllib2.urlopen(url).read() )
+        results = json.loads( urlfetch.fetch(url=url, deadline=10).content )
         memcache.set(urlkey, results)
       else:
         logging.info('Hit cache for catalog search request!')
@@ -519,7 +519,7 @@ class Directions(remote.Service):
     """ Listing of all the (documented) directions to physical items in the library """
     directs = memcache.get('item-directions')
     if directs is None:
-        results = json.loads( urllib2.urlopen(directionsURL).read() )
+        results = json.loads( urlfetch.fetch(url=directionsURL, deadline=10).content )
         directs = self.load_directions(results)
         memcache.set('item-directions', protojson.encode_message(directs))
         return directs
@@ -527,6 +527,30 @@ class Directions(remote.Service):
         logging.info('Hit cache for directions list request!')
         self.directions = protojson.decode_message(DirectionCollection, directs)
         return self.directions
+
+  DIRECTIONS_RESOURCE = endpoints.ResourceContainer(
+    message_types.VoidMessage,
+    id=messages.StringField(1),
+    library=messages.StringField(2)
+  )
+  @endpoints.method(DIRECTIONS_RESOURCE, DirectionCollection,
+                    path='get', 
+                    http_method='GET',
+                    name='get'
+  )
+  def get(self, unused_request):
+    """ Listing of all the (documented) directions to physical items in the library """
+    directs = memcache.get('item-directions')
+    if directs is None:
+        results = json.loads( urlfetch.fetch(url=directionsURL, deadline=10).content )
+        directs = self.load_directions(results)
+        memcache.set('item-directions', protojson.encode_message(directs))
+        return directs
+    else:
+        logging.info('Hit cache for directions list request!')
+        self.directions = protojson.decode_message(DirectionCollection, directs)
+        return self.directions
+
 
 @an_api.api_class(
   resource_name="repository",
